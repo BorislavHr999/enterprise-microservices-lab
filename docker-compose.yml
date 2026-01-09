@@ -1,0 +1,169 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # ИНФРАСТРУКТУРА (БАЗИ ДАННИ)
+  # ==========================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: db-postgres
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: enterprise_db
+    networks:
+      - backbone
+
+  mongo:
+    image: mongo:6
+    container_name: db-mongo
+    networks:
+      - backbone
+
+  redis:
+    image: redis:alpine
+    container_name: cache-redis
+    networks:
+      - backbone
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: msg-broker
+    ports:
+      - "15672:15672"
+      - "5672:5672"
+    networks:
+      - backbone
+
+  minio:
+    image: minio/minio
+    container_name: obj-storage
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      - backbone
+
+  # ==========================================
+  # АДМИН ИНСТРУМЕНТИ
+  # ==========================================
+  adminer:
+    image: adminer
+    container_name: tool-adminer
+    ports:
+      - "8081:8080"
+    networks:
+      - backbone
+
+  mongo-express:
+    image: mongo-express
+    container_name: tool-mongo-ui
+    environment:
+      ME_CONFIG_MONGODB_SERVER: mongo
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: password
+    ports:
+      - "8082:8081"
+    networks:
+      - backbone
+
+  mailhog:
+    image: mailhog/mailhog
+    container_name: tool-mail
+    ports:
+      - "8025:8025"
+    networks:
+      - backbone
+
+  # ==========================================
+  # МИКРОСЪРВИСИ (С ОТВОРЕНИ ПОРТОВЕ)
+  # ==========================================
+  
+  auth-service:
+    build: ./app
+    environment:
+      - SERVICE_NAME=Auth-Service
+    networks:
+      - backbone
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8001:80"  # <--- ДИРЕКТЕН ВХОД
+
+  product-service:
+    build: ./app
+    environment:
+      - SERVICE_NAME=Product-Service
+    networks:
+      - backbone
+    depends_on:
+      - mongo
+    ports:
+      - "8002:80"  # <--- ДИРЕКТЕН ВХОД
+
+  order-service:
+    build: ./app
+    environment:
+      - SERVICE_NAME=Order-Service
+    networks:
+      - backbone
+    depends_on:
+      - postgres
+      - rabbitmq
+    ports:
+      - "8003:80"  # <--- ДИРЕКТЕН ВХОД
+
+  payment-service:
+    build: ./app
+    environment:
+      - SERVICE_NAME=Payment-Gateway
+    networks:
+      - backbone
+    depends_on:
+      - rabbitmq
+    ports:
+      - "8004:80"
+
+  inventory-service:
+    build: ./app
+    environment:
+      - SERVICE_NAME=Inventory-Core
+    networks:
+      - backbone
+    depends_on:
+      - mongo
+      - redis
+    ports:
+      - "8005:80"
+
+  # ==========================================
+  # WORKERS
+  # ==========================================
+  notification-worker:
+    build: ./app
+    environment:
+      - SERVICE_NAME=Notification-Worker
+    networks:
+      - backbone
+    depends_on:
+      - rabbitmq
+      - mailhog
+
+  report-worker:
+    build: ./app
+    environment:
+      - SERVICE_NAME=Report-Generator
+    networks:
+      - backbone
+    depends_on:
+      - postgres
+      - minio
+
+networks:
+  backbone:
+    driver: bridge
